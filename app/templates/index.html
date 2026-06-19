@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>Проверка текста<br>на соответствие источникам</h1>
+  <p class="lede">Загрузите текст и литературу — платформа разберёт каждый эпизод,
+     сверит с источниками и покажет, где ссылки не подтверждают написанное.</p>
+</section>
+
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+
+<form class="card form" action="/check" method="post" enctype="multipart/form-data" id="form">
+  <div class="seg" role="tablist">
+    <button type="button" class="seg-btn active" data-tab="file">Файл</button>
+    <button type="button" class="seg-btn" data-tab="text">Текст</button>
+    <button type="button" class="seg-btn" data-tab="url">Ссылка</button>
+  </div>
+
+  <div class="tab" data-tab="file">
+    <label class="drop" id="docdrop">
+      <input type="file" name="doc_file" accept=".txt,.md,.csv,.html,.htm,.rtf,.odt,.docx,.doc,.pdf,.epub,.xml">
+      <span class="drop-title">Перетащите документ или нажмите</span>
+      <span class="hint">Форматы: {{ formats }}</span>
+    </label>
+  </div>
+  <div class="tab hidden" data-tab="text">
+    <textarea name="doc_text" rows="10" placeholder="Вставьте проверяемый текст со ссылками [1], (Иванов, 2021)… и списком литературы в конце"></textarea>
+  </div>
+  <div class="tab hidden" data-tab="url">
+    <input class="field" type="url" name="doc_url" placeholder="https://… ссылка на статью">
+    <span class="hint">Платформа скачает статью по ссылке и извлечёт текст.</span>
+  </div>
+
+  <hr class="sep">
+
+  <label class="block-label">Файлы источников <span class="muted">(необязательно — иначе догрузим из сети)</span></label>
+  <label class="drop small" id="srcdrop">
+    <input type="file" name="source_files" multiple
+           accept=".txt,.md,.csv,.html,.htm,.rtf,.odt,.docx,.doc,.pdf,.epub,.xml">
+    <span class="drop-title">Добавьте PDF/DOCX источников</span>
+    <span class="hint">Назовите файлы по номеру в списке: <code>1.pdf</code>, <code>[2].docx</code>…</span>
+  </label>
+
+  <div class="row between">
+    <label class="toggle {{ '' if ai_available else 'disabled' }}">
+      <input type="checkbox" name="use_ai" value="on" {{ 'checked' if ai_available else 'disabled' }}>
+      <span class="track"></span>
+      <span class="toggle-label">ИИ-сверка
+        <small>{{ 'строгий режим: судит только по тексту источника' if ai_available else 'недоступна — нет ключа' }}</small>
+      </span>
+    </label>
+    <button class="btn" type="submit">Проверить</button>
+  </div>
+</form>
+
+<section class="how">
+  <div class="step"><b>1.</b> Разбор текста на эпизоды и ссылки</div>
+  <div class="step"><b>2.</b> Привязка источников: файл → сеть</div>
+  <div class="step"><b>3.</b> Автоматическая проверка фактов</div>
+  <div class="step"><b>4.</b> Отчёт по всем эпизодам и вывод</div>
+</section>
+{% endblock %}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}{{ app_name }} — {{ app_tagline }}{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='26' fill='%230a84ff'/><path d='M28 52l16 16 30-34' stroke='white' stroke-width='11' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
+</head>
+<body>
+  <!-- Приветственный сплэш с всплывающей анимацией -->
+  <div id="splash" class="splash">
+    <div class="splash-core">
+      <div class="logo-mark"><span class="check">✓</span></div>
+      <div class="splash-name">{{ app_name }}</div>
+      <div class="splash-sub">{{ app_tagline }}</div>
+      <div class="splash-bar"><i></i></div>
+    </div>
+  </div>
+
+  <!-- Плавающий градиентный фон -->
+  <div class="bg" aria-hidden="true">
+    <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span>
+    <div class="grid"></div>
+  </div>
+
+  <header class="nav glass">
+    <a class="brand" href="/"><span class="logo-mini">✓</span>{{ app_name }}</a>
+    <nav class="nav-links">
+      <a href="/">Проверка</a>
+      <a href="/history">История</a>
+      <a href="/faq">FAQ</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="foot">
+    <span>{{ app_name }} — {{ app_tagline }}</span>
+    <span class="foot-social">
+      <a class="ic-btn" href="https://vk.ru/zernoprod" target="_blank" rel="noopener" aria-label="VK" title="VK">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.07 2H8.93C3.33 2 2 3.33 2 8.93v6.14C2 20.67 3.33 22 8.93 22h6.14c5.6 0 6.93-1.33 6.93-6.93V8.93C22 3.33 20.66 2 15.07 2zm3.07 14.27h-1.46c-.55 0-.72-.44-1.71-1.43-.86-.83-1.24-.94-1.45-.94-.3 0-.39.08-.39.5v1.31c0 .36-.12.57-1.06.57-1.56 0-3.29-.95-4.51-2.71-1.83-2.58-2.33-4.52-2.33-4.92 0-.22.08-.42.5-.42h1.46c.38 0 .52.17.67.58.72 2.09 1.92 3.92 2.42 3.92.19 0 .27-.08.27-.56V10.6c-.06-1.02-.6-1.1-.6-1.46 0-.17.15-.34.38-.34h2.29c.32 0 .43.17.43.55v3.08c0 .32.14.43.23.43.19 0 .34-.11.68-.45 1.05-1.17 1.79-2.97 1.79-2.97.1-.22.27-.42.65-.42h1.46c.44 0 .53.22.44.55-.18.85-1.97 3.37-1.97 3.37-.15.25-.21.36 0 .64.15.21.66.65.99 1.04.62.7 1.09 1.29 1.22 1.7.12.4-.08.61-.49.61z"/></svg>
+      </a>
+      <a class="ic-btn" href="https://t.me/zerno_17" target="_blank" rel="noopener" aria-label="Telegram" title="Telegram @zerno_17">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.9 4.3 2.9 11.6c-1 .4-1 1.4-.1 1.7l4.8 1.5 1.8 5.7c.2.6 1 .8 1.5.3l2.7-2.6 4.9 3.6c.6.4 1.5.1 1.7-.7l3.3-15.5c.2-1-.7-1.8-1.6-1.3zM8.9 14.3l9-5.6c.4-.3.8.3.5.6l-7.3 6.8-.3 3.5-1.9-5.3z"/></svg>
+      </a>
+    </span>
+    <span class="author">© {{ author_year }} {{ author }}</span>
+  </footer>
+
+  <script src="/static/app.js?v={{ asset_v }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

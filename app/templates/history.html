@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}История · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero sm">
+  <h1>История проверок</h1>
+  <p class="lede">Последние отчёты сверки на этом сервере.</p>
+</section>
+
+{% if not entries %}
+  <div class="card pad" style="text-align:center">
+    Пока нет проверок. <a href="/" class="lnk">Запустить первую →</a>
+  </div>
+{% endif %}
+
+<div class="hist">
+  {% for e in entries %}
+  <a class="hist-row card" href="/report/{{ e.job_id }}">
+    <span class="hist-score {{ 'hi' if e.score >= 70 else ('mid' if e.score >= 40 else 'lo') }}">{{ e.score }}<small>%</small></span>
+    <span class="hist-main">
+      <b class="hist-doc">{{ e.doc_name }}</b>
+      <small class="muted">{{ e.created_at.replace('T',' ') }} · эпизодов: {{ e.episodes }} · {{ 'ИИ-сверка' if e.ai_used else 'эвристики' }}</small>
+    </span>
+    <span class="hist-risk">риск {{ e.risk }}%</span>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Отчёт — {{ rep.doc_name }} · {{ app_name }}{% endblock %}
+{% block content %}
+
+<section class="report-head reveal">
+  <div class="rh-left">
+    <span class="kicker">Отчёт сверки</span>
+    <h1 class="rh-title">{{ rep.doc_name }}</h1>
+    <p class="muted">{{ rep.created_at }} · ИИ-сверка: {{ 'включена' if rep.ai_used else 'выключена' }}</p>
+    <p class="verdict">{{ rep.verdict_text }}</p>
+    <div class="dl">
+      <a class="btn ghost" href="/api/report/{{ rep.job_id }}.md">Скачать .md</a>
+      <a class="btn ghost" href="/api/report/{{ rep.job_id }}.json">JSON</a>
+      <button class="btn ghost" type="button" onclick="window.print()">Печать / PDF</button>
+    </div>
+  </div>
+  <div class="rh-right">
+    <div class="gauge" style="--val: {{ rep.score }}" data-score="{{ rep.score }}">
+      <div class="gauge-inner">
+        <div class="gauge-num"><span class="js-count" data-to="{{ rep.score }}">{{ rep.score }}</span><small>%</small></div>
+      </div>
+    </div>
+    <div class="gauge-cap">соответствие источникам</div>
+    <div class="risk {{ 'hot' if rep.ai_generated_likelihood >= 60 else ('mid' if rep.ai_generated_likelihood >= 30 else 'low') }}">
+      Похоже на ИИ-генерацию / несоответствие литературы: <b>{{ rep.ai_generated_likelihood }}%</b>
+    </div>
+  </div>
+</section>
+
+<section class="chips reveal" id="chips">
+  {% set labels = {'SUPPORTED':'Подтверждён','PARTIAL':'Частично','NOT_SUPPORTED':'Не подтверждён','SOURCE_MISSING':'Источник не найден','FABRICATED':'Источник выдуман'} %}
+  <button class="chip all active" data-st="">Все · {{ rep.episodes|length }}</button>
+  {% for st, n in rep.counts.items() %}
+    {% if n > 0 %}<button class="chip {{ status_class[st] }} filterable" data-st="{{ st }}">{{ labels[st] }} · {{ n }}</button>{% endif %}
+  {% endfor %}
+</section>
+
+<section class="episodes">
+  <h2 class="sec">Эпизоды <span class="muted">({{ rep.episodes|length }})</span></h2>
+  {% if rep.episodes|length == 0 %}
+    <div class="card pad">В тексте не найдено эпизодов со ссылками на источники.</div>
+  {% endif %}
+  {% for ep in rep.episodes %}
+  <article class="ep card {{ status_class[ep.verdict.status.value] }}" data-st="{{ ep.verdict.status.value }}">
+    <div class="ep-top">
+      <span class="badge {{ status_class[ep.verdict.status.value] }}">{{ ep.verdict.status.ru }}</span>
+      <span class="ep-no">#{{ ep.index + 1 }}</span>
+      <span class="refs">
+        {% for c in ep.citations %}<code class="ref">{{ c.raw }}</code>{% endfor %}
+      </span>
+    </div>
+    <p class="ep-text">{{ ep.text }}</p>
+    {% if ep.verdict.quote %}
+      <blockquote class="quote">«{{ ep.verdict.quote }}»<span class="qcap">дословно из источника</span></blockquote>
+    {% endif %}
+    {% if ep.verdict.reasons %}
+      <div class="reasons">{% for r in ep.verdict.reasons %}<span class="tag">{{ r }}</span>{% endfor %}</div>
+    {% endif %}
+  </article>
+  {% endfor %}
+</section>
+
+<section class="sources reveal">
+  <h2 class="sec">Источники <span class="muted">({{ rep.sources|length }})</span></h2>
+  <div class="card pad">
+    {% for s in rep.sources %}
+    <div class="src">
+      <span class="src-key">[{{ s.key }}]</span>
+      <span class="src-body">
+        <span class="src-text">{{ s.bib_text }}</span>
+        <span class="src-meta origin-{{ s.origin }}">{{ s.origin }} · {{ s.note }}</span>
+      </span>
+    </div>
+    {% else %}<span class="muted">Список литературы не распознан.</span>{% endfor %}
+  </div>
+</section>
+
+<div class="back"><a class="btn" href="/">← Новая проверка</a></div>
+{% endblock %}
