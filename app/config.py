@@ -41,6 +41,7 @@ DATA_DIR = os.getenv("DATA_DIR", "./data").rstrip("/")
 UPLOADS_DIR = os.path.join(DATA_DIR, "uploads")
 REPORTS_DIR = os.path.join(DATA_DIR, "reports")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
+LOG_DIR = os.getenv("LOG_DIR", os.path.join(DATA_DIR, "logs")).rstrip("/")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "40"))
 
 # --- ИИ (провайдер-агностик; ключи из .env) ---
@@ -67,7 +68,11 @@ FETCH_TIMEOUT = int(os.getenv("FETCH_TIMEOUT", "20"))
 # путь к изолированному правилу ИИ
 AI_RULES_PATH = os.getenv("AI_RULES_PATH", "AI_RULES.md")
 
+# опциональный токен доступа к /check (если задан — без него проверка запрещена)
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN", "").strip()
+FETCH_MAX_REDIRECTS = int(os.getenv("FETCH_MAX_REDIRECTS", "5"))
+
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, UPLOADS_DIR, REPORTS_DIR, CACHE_DIR):
+    for d in (DATA_DIR, UPLOADS_DIR, REPORTS_DIR, CACHE_DIR, LOG_DIR):
         os.makedirs(d, exist_ok=True)

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Callable, Optional
@@ -15,6 +16,7 @@ from . import config, llm
 from .heuristics import tokens
 from .models import MatchJudgement
 
+log = logging.getLogger("check.verifier")
 _VALID = {"SUPPORTED", "PARTIAL", "NOT_SUPPORTED", "SOURCE_MISSING"}
 _RULES_CACHE: Optional[str] = None
 
@@ -37,21 +39,31 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip().lower().replace("ё", "е")
 
 
-def relevant_window(claim: str, source: str, max_chars: int = 4000) -> str:
-    """Окно источника вокруг наиболее релевантной утверждению зоны (дословно)."""
+def relevant_window(claim: str, source: str, max_chars: int = 8000) -> str:
+    """Окно источника вокруг наиболее релевантной утверждению зоны (дословно).
+
+    Окна перекрываются (шаг = max_chars/2) и ВСЕГДА включают хвост документа —
+    иначе факт в последних строках длинного источника терялся (ложный NOT_SUPPORTED).
+    """
     if not source:
         return ""
     if len(source) <= max_chars:
         return source
     terms = set(tokens(claim))
     src_low = source.lower()
-    best_pos, best_hits = 0, -1
-    step = 500
-    for pos in range(0, max(1, len(source) - max_chars + 1), step):
+    tail = len(source) - max_chars
+    step = max(1, max_chars // 2)
+    offsets = list(range(0, tail + 1, step))
+    if not offsets or offsets[-1] != tail:
+        offsets.append(tail)               # гарантируем покрытие конца
+    best_pos, best_hits = offsets[0], -1
+    for pos in offsets:
         window = src_low[pos: pos + max_chars]
         hits = sum(1 for t in terms if t in window)
         if hits > best_hits:
             best_hits, best_pos = hits, pos
+    log.info("ОКНО: источник=%d симв, max=%d, окон=%d, выбран offset=%d, попаданий=%d/%d",
+             len(source), max_chars, len(offsets), best_pos, best_hits, len(terms))
     return source[best_pos: best_pos + max_chars]
 
 
@@ -81,6 +93,8 @@ def judge(claim: str, source_excerpt: Optional[str],
             "Верни JSON по схеме §4 (status, quote, rationale, confidence).")
     fn = chat_fn or (lambda s, u, t: llm.chat(s, u, t))
     raw = fn(_system_prompt(), user, config.VERIFY_TEMPERATURE)
+    log.info("ИИ-ответ (%d симв): %s", len(raw or ""),
+             (raw or "—")[:220].replace("\n", " "))
 
     # ИИ недоступен — честно говорим, что машинной сверки не было
     if not raw:

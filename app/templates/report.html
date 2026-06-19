@@ -9,9 +9,10 @@
     <p class="muted">{{ rep.created_at }} · ИИ-сверка: {{ 'включена' if rep.ai_used else 'выключена' }}</p>
     <p class="verdict">{{ rep.verdict_text }}</p>
     <div class="dl">
+      <button class="btn ghost" type="button" id="copy-link" data-url="{{ request.url }}">Скопировать ссылку</button>
       <a class="btn ghost" href="/api/report/{{ rep.job_id }}.md">Скачать .md</a>
       <a class="btn ghost" href="/api/report/{{ rep.job_id }}.json">JSON</a>
-      <button class="btn ghost" type="button" onclick="window.print()">Печать / PDF</button>
+      <button class="btn ghost" type="button" id="print-btn">Печать / PDF</button>
     </div>
   </div>
   <div class="rh-right">
@@ -50,11 +51,16 @@
       </span>
     </div>
     <p class="ep-text">{{ ep.text }}</p>
+    {% if ep.verdict.explanation %}
+      <p class="ep-why">{{ ep.verdict.explanation }}</p>
+    {% endif %}
     {% if ep.verdict.quote %}
       <blockquote class="quote">«{{ ep.verdict.quote }}»<span class="qcap">дословно из источника</span></blockquote>
     {% endif %}
     {% if ep.verdict.reasons %}
-      <div class="reasons">{% for r in ep.verdict.reasons %}<span class="tag">{{ r }}</span>{% endfor %}</div>
+      <details class="reasons-d"><summary>технические детали</summary>
+        <div class="reasons">{% for r in ep.verdict.reasons %}<span class="tag">{{ r }}</span>{% endfor %}</div>
+      </details>
     {% endif %}
   </article>
   {% endfor %}

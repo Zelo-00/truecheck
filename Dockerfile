@@ -15,7 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY AI_RULES.md ./AI_RULES.md
 
-RUN mkdir -p /data/uploads /data/reports /data/cache
+# непривилегированный пользователь (uid 1000 = владелец bind-mount ./logs на хосте)
+RUN useradd -u 1000 -m appuser \
+ && mkdir -p /data/uploads /data/reports /data/cache /data/logs \
+ && chown -R 1000:1000 /data /app
+USER 1000
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \

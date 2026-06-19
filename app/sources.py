@@ -11,7 +11,7 @@ import logging
 import re
 import socket
 from typing import Optional
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from . import config
 from .extract import html_to_text, read_document
@@ -49,17 +49,33 @@ def _is_public_url(url: str) -> bool:
 # ----------------------------------------------------------------------------- #
 
 def fetch_bytes(url: str) -> tuple[Optional[bytes], str]:
-    """Скачивает URL (только публичные http(s)). Возвращает (bytes|None, content_type)."""
+    """Скачивает URL (только публичные http(s)). Возвращает (bytes|None, content_type).
+
+    Редиректы следуются ВРУЧНУЮ с повторной SSRF-проверкой каждого перехода —
+    иначе публичный URL мог бы редиректнуть на 127.0.0.1/169.254.169.254.
+    """
     if not _is_public_url(url):
         log.warning("fetch blocked (non-public or bad url): %s", url)
         return None, ""
     try:
         import httpx  # ленивый импорт
-        with httpx.Client(follow_redirects=True, timeout=config.FETCH_TIMEOUT,
+        with httpx.Client(follow_redirects=False, timeout=config.FETCH_TIMEOUT,
                           headers=_UA) as cli:
-            r = cli.get(url)
-            r.raise_for_status()
-            return r.content, r.headers.get("content-type", "")
+            cur = url
+            for _ in range(config.FETCH_MAX_REDIRECTS + 1):
+                r = cli.get(cur)
+                if r.status_code in (301, 302, 303, 307, 308):
+                    loc = r.headers.get("location", "")
+                    nxt = urljoin(cur, loc) if loc else ""
+                    if not nxt or not _is_public_url(nxt):
+                        log.warning("redirect заблокирован (SSRF?): %s -> %s", cur, nxt)
+                        return None, ""
+                    cur = nxt
+                    continue
+                r.raise_for_status()
+                return r.content, r.headers.get("content-type", "")
+            log.warning("слишком много редиректов: %s", url)
+            return None, ""
     except Exception as e:  # noqa: BLE001
         log.warning("fetch failed %s: %s", url, e)
         return None, ""
@@ -114,14 +130,18 @@ def _score_match(ref: SourceRef, fname: str, text: str) -> int:
     return score
 
 
-def _assign_files(sources: list[SourceRef], file_text: dict[str, str]) -> dict[str, str]:
-    """Глобально сопоставляет файлы записям литературы (1:1) по содержимому/имени.
+def _assign_files(sources: list[SourceRef], file_text: dict[str, str]
+                  ) -> tuple[dict[str, str], set[str]]:
+    """Сопоставляет файлы записям литературы (1:1) по содержимому/имени.
 
     Жадно берём пары с наибольшим совпадением; остаток раздаём по порядку
-    (пользователь часто грузит файлы в порядке списка литературы).
+    ЗАГРУЗКИ (пользователь обычно грузит файлы в порядке списка литературы),
+    а не по алфавиту — иначе источник получал чужой файл. Такие привязки
+    помечаются как низкоуверенные.
+    Возвращает (назначения, множество ключей с низкой уверенностью).
     """
     if not sources or not file_text:
-        return {}
+        return {}, set()
     pairs = []
     for ref in sources:
         for fname, text in file_text.items():
@@ -136,14 +156,16 @@ def _assign_files(sources: list[SourceRef], file_text: dict[str, str]) -> dict[s
         assign[key] = fname
         used_files.add(fname)
 
-    # добор по порядку: оставшиеся записи ↔ оставшиеся файлы
+    # добор по порядку ЗАГРУЗКИ (insertion order dict), не по алфавиту
+    low_conf: set[str] = set()
     rem_refs = [s.key for s in sources if s.key not in assign]
-    rem_files = [f for f in sorted(file_text) if f not in used_files]
+    rem_files = [f for f in file_text if f not in used_files]
     for key, fname in zip(rem_refs, rem_files):
         assign[key] = fname
         used_files.add(fname)
-        log.info("источник [%s] ← файл %s (по порядку)", key, fname)
-    return assign
+        low_conf.add(key)
+        log.info("источник [%s] ← файл %s (по порядку загрузки, низкая уверенность)", key, fname)
+    return assign, low_conf
 
 
 def attach_sources(sources: list[SourceRef], uploads: dict[str, bytes],
@@ -160,7 +182,7 @@ def attach_sources(sources: list[SourceRef], uploads: dict[str, bytes],
             file_text[fname] = ""
             log.warning("не прочитан файл %s: %s", fname, e)
 
-    assign = _assign_files(sources, file_text)
+    assign, low_conf = _assign_files(sources, file_text)
     used = set(assign.values())
 
     for ref in sources:
@@ -169,7 +191,9 @@ def attach_sources(sources: list[SourceRef], uploads: dict[str, bytes],
             ref.content = file_text[fname]
             ref.origin = "local"
             ref.location = fname
-            ref.note = f"Загружен файлом: {fname}"
+            ref.note = (f"Загружен файлом: {fname}"
+                        + (" (сопоставлен по порядку, низкая уверенность)"
+                           if ref.key in low_conf else ""))
             log.info("источник [%s] привязан к %s (%d симв.)", ref.key, fname, len(ref.content))
             continue
 

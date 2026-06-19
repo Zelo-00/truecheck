@@ -239,6 +239,12 @@ textarea:focus,.field:focus{outline:0;border-color:var(--accent);box-shadow:0 0 
 .quote{margin:12px 0 6px;padding:12px 16px;border-radius:12px;background:rgba(52,199,89,.08);
   border-left:3px solid var(--ok);font-style:italic;position:relative}
 .qcap{display:block;font-style:normal;font-size:11px;color:var(--muted);margin-top:6px;text-transform:uppercase;letter-spacing:.06em}
+.ep-why{margin:8px 0 4px;color:#33405c;background:rgba(10,132,255,.06);
+  border-left:3px solid var(--accent);padding:10px 14px;border-radius:0 10px 10px 0;font-size:14.5px}
+.reasons-d{margin-top:10px}
+.reasons-d summary{cursor:pointer;color:var(--muted);font-size:12px;list-style:none}
+.reasons-d summary::-webkit-details-marker{display:none}
+.reasons-d summary::marker{content:"";display:none}
 .reasons{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .tag{font-size:11px;color:var(--muted);background:rgba(10,16,32,.05);padding:3px 9px;border-radius:7px;font-family:"SF Mono",monospace}
 

@@ -35,6 +35,8 @@ def to_markdown(rep: Report) -> str:
         lines.append(f"> {ep.text}")
         refs = ", ".join(c.raw for c in ep.citations)
         lines.append(f"- Ссылки: {refs}")
+        if v.explanation:
+            lines.append(f"- Объяснение: {v.explanation}")
         if v.quote:
             lines.append(f"- Цитата из источника: «{v.quote}»")
         if v.reasons:
@@ -54,7 +56,6 @@ def save(rep: Report) -> dict:
         f.write(to_json(rep))
     with open(base + ".md", "w", encoding="utf-8") as f:
         f.write(to_markdown(rep))
-    append_index(rep)
     return {"json": base + ".json", "md": base + ".md"}
 
 
@@ -62,20 +63,21 @@ def _index_path() -> str:
     return os.path.join(config.REPORTS_DIR, "index.jsonl")
 
 
-def append_index(rep: Report) -> None:
-    """Добавляет компактную запись об отчёте в журнал истории (index.jsonl)."""
+def append_index(rep: Report, sid: str = "") -> None:
+    """Заносит отчёт в журнал истории с привязкой к сессии (sid) пользователя."""
     entry = {"job_id": rep.job_id, "doc_name": rep.doc_name,
              "created_at": rep.created_at, "score": rep.score,
              "risk": rep.ai_generated_likelihood, "episodes": len(rep.episodes),
-             "ai_used": rep.ai_used}
+             "ai_used": rep.ai_used, "sid": sid}
+    config.ensure_dirs()
     with open(_index_path(), "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def read_index(limit: int = 100) -> list[dict]:
-    """Читает историю проверок, новые — первыми."""
+def read_index(sid: str, limit: int = 100) -> list[dict]:
+    """История ТОЛЬКО текущей сессии (по sid), новые — первыми. Без sid → пусто."""
     p = _index_path()
-    if not os.path.exists(p):
+    if not sid or not os.path.exists(p):
         return []
     out: list[dict] = []
     with open(p, encoding="utf-8") as f:
@@ -84,8 +86,10 @@ def read_index(limit: int = 100) -> list[dict]:
             if not line:
                 continue
             try:
-                out.append(json.loads(line))
+                e = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if e.get("sid") == sid:
+                out.append(e)
     out.reverse()
     return out[:limit]

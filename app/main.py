@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import secrets
 import uuid
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -17,11 +18,18 @@ from .extract import SUPPORTED_EXTS, analyze_document, read_document
 from .grader import build_report
 from .sources import attach_sources, fetch_text_from_url
 
+config.ensure_dirs()
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-log = logging.getLogger("check.main")
+# реальный лог работы в файл (папка logs/) — для разбора галлюцинаций/границ
+from logging.handlers import RotatingFileHandler  # noqa: E402
 
-config.ensure_dirs()
+_fh = RotatingFileHandler(os.path.join(config.LOG_DIR, "app.log"),
+                          maxBytes=3_000_000, backupCount=5, encoding="utf-8")
+_fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger().addHandler(_fh)
+logging.getLogger().setLevel(logging.INFO)
+log = logging.getLogger("check.main")
 _HERE = os.path.dirname(__file__)
 app = FastAPI(title=f"{APP_NAME} — проверка текста по источникам", version=__version__)
 app.mount("/static", StaticFiles(directory=os.path.join(_HERE, "static")), name="static")
@@ -49,26 +57,47 @@ templates.env.globals.update(status_class=_STATUS_CLASS, app_name=APP_NAME,
                              author_year=AUTHOR_YEAR, asset_v=ASSET_V)
 
 
+_COOKIE_MAXAGE = 60 * 60 * 24 * 365
+
+
+def _get_or_set_sid(request: Request, response) -> str:
+    """Анонимный идентификатор сессии в cookie — чтобы история была приватной."""
+    sid = request.cookies.get("tc_sid")
+    if not sid:
+        sid = secrets.token_hex(16)
+        response.set_cookie("tc_sid", sid, max_age=_COOKIE_MAXAGE,
+                            httponly=True, samesite="lax")
+    return sid
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse(request, "index.html", {
+    resp = templates.TemplateResponse(request, "index.html", {
         "ai_available": llm.available(),
+        "auth_required": bool(config.ACCESS_TOKEN),
         "formats": ", ".join(e.lstrip(".") for e in SUPPORTED_EXTS),
     })
+    _get_or_set_sid(request, resp)
+    return resp
 
 
 @app.get("/faq", response_class=HTMLResponse)
 def faq(request: Request):
-    return templates.TemplateResponse(request, "faq.html", {
+    resp = templates.TemplateResponse(request, "faq.html", {
         "formats": ", ".join(e.lstrip(".") for e in SUPPORTED_EXTS),
     })
+    _get_or_set_sid(request, resp)
+    return resp
 
 
 @app.get("/history", response_class=HTMLResponse)
 def history(request: Request):
-    return templates.TemplateResponse(request, "history.html", {
-        "entries": report_mod.read_index(200),
+    sid = request.cookies.get("tc_sid", "")
+    resp = templates.TemplateResponse(request, "history.html", {
+        "entries": report_mod.read_index(sid, 200),
     })
+    _get_or_set_sid(request, resp)
+    return resp
 
 
 @app.get("/health")
@@ -84,7 +113,14 @@ async def check(
     doc_url: str = Form(default=""),
     source_files: list[UploadFile] = File(default=[]),
     use_ai: str = Form(default="on"),
+    token: str = Form(default=""),
 ):
+    # --- 0. токен доступа (если включён) ---
+    if config.ACCESS_TOKEN:
+        given = token or request.headers.get("x-access-token", "")
+        if not secrets.compare_digest(given, config.ACCESS_TOKEN):
+            return _error(request, "Неверный или отсутствует токен доступа.", status=401)
+
     # --- 1. получаем проверяемый текст: файл | вставка | ссылка ---
     doc_name, text = "", ""
     if doc_file is not None and doc_file.filename:
@@ -119,14 +155,19 @@ async def check(
     job_id = uuid.uuid4().hex[:12]
     rep = build_report(job_id, doc_name, episodes, sources, use_ai=want_ai)
 
-    # --- 4. рендер + сохранение ---
+    # --- 4. рендер + сохранение + привязка к сессии ---
+    sid = request.cookies.get("tc_sid") or secrets.token_hex(16)
     report_mod.save(rep)
+    report_mod.append_index(rep, sid)
     html = templates.get_template("report.html").render(request=request, rep=rep,
                                                         status_class=_STATUS_CLASS,
                                                         app_name=APP_NAME)
     with open(os.path.join(config.REPORTS_DIR, job_id + ".html"), "w", encoding="utf-8") as f:
         f.write(html)
-    return HTMLResponse(html)
+    resp = HTMLResponse(html)
+    if not request.cookies.get("tc_sid"):
+        resp.set_cookie("tc_sid", sid, max_age=_COOKIE_MAXAGE, httponly=True, samesite="lax")
+    return resp
 
 
 @app.get("/report/{job_id}", response_class=HTMLResponse)
@@ -170,8 +211,9 @@ def _safe(job_id: str) -> str:
     return "".join(ch for ch in job_id if ch.isalnum())[:32]
 
 
-def _error(request: Request, msg: str) -> HTMLResponse:
+def _error(request: Request, msg: str, status: int = 400) -> HTMLResponse:
     return templates.TemplateResponse(request, "index.html", {
         "ai_available": llm.available(),
+        "auth_required": bool(config.ACCESS_TOKEN),
         "formats": ", ".join(e.lstrip(".") for e in SUPPORTED_EXTS), "error": msg,
-    }, status_code=400)
+    }, status_code=status)

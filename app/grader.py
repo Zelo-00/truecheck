@@ -7,12 +7,18 @@
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from typing import Callable, Optional
 
 from . import config, llm, verifier
-from .heuristics import score_episode
+from .heuristics import score_episode, term_overlap
 from .models import Episode, EpisodeVerdict, Report, SourceRef, Status, worst
 from .verifier import relevant_window
+
+log = logging.getLogger("check.grader")
+
+# флаги ИИ, означающие ОТСУТСТВИЕ реального сигнала → опираемся на эвристики
+_AI_NO_SIGNAL = {"ai_unavailable", "ai_invalid", "ai_invalid_status"}
 
 _AI_TO_STATUS = {
     "SUPPORTED": Status.SUPPORTED,
@@ -23,13 +29,15 @@ _AI_TO_STATUS = {
 
 
 def _best_excerpt(ep: Episode, by_key: dict[str, SourceRef]) -> str:
-    """Релевантное окно текста лучшего привязанного источника (для ИИ)."""
-    best, best_len = "", -1
+    """Окно текста НАИБОЛЕЕ РЕЛЕВАНТНОГО источника (по пересечению терминов, не по длине)."""
+    best, best_ov = None, -1.0
     for c in ep.citations:
         s = by_key.get(c.ref_key)
-        if s and s.has_content and len(s.content) > best_len:
-            best, best_len = s.content, len(s.content)
-    return relevant_window(ep.text, best) if best else ""
+        if s and s.has_content:
+            ov = term_overlap(ep.text, s.content)
+            if ov > best_ov:
+                best_ov, best = ov, s
+    return relevant_window(ep.text, best.content) if best else ""
 
 
 def grade_episode(ep: Episode, by_key: dict[str, SourceRef], use_ai: bool,
@@ -41,11 +49,13 @@ def grade_episode(ep: Episode, by_key: dict[str, SourceRef], use_ai: bool,
     final = h.status
 
     excerpt = _best_excerpt(ep, by_key)
+    ai_no_signal = True
     if use_ai and excerpt:
         aj = verifier.judge(ep.text, excerpt, chat_fn=chat_fn)
         ai_judgement = aj
         reasons += [f"ai:{f}" for f in aj.flags]
-        if "ai_unavailable" not in aj.flags:           # есть реальный сигнал ИИ
+        if not (_AI_NO_SIGNAL & set(aj.flags)):         # есть РЕАЛЬНЫЙ сигнал ИИ
+            ai_no_signal = False
             ai_status = _AI_TO_STATUS.get(aj.status, Status.NOT_SUPPORTED)
             final = worst(h.status, ai_status)          # ИИ только понижает
             if aj.quote:
@@ -56,8 +66,48 @@ def grade_episode(ep: Episode, by_key: dict[str, SourceRef], use_ai: bool,
         final = Status.PARTIAL
         reasons.append("no_quote_downgrade")
 
+    explanation = _explain(final, h, ai_judgement, ep, quote, ai_no_signal)
+
+    ai_dbg = (f"ai={ai_judgement.status}/q={len(ai_judgement.quote)}/{ai_judgement.flags}"
+              if ai_judgement else "ai=off")
+    log.info("эпизод #%d: heur=%s(%.2f) %s -> ИТОГ=%s | excerpt=%d симв | claim=%r",
+             ep.index, h.status.value, h.score, ai_dbg, final.value,
+             len(excerpt), ep.text[:90])
+
     return EpisodeVerdict(status=final, heuristic_score=h.score, ai=ai_judgement,
-                          quote=quote, reasons=reasons)
+                          quote=quote, explanation=explanation, reasons=reasons)
+
+
+def _explain(final: Status, h, ai, ep: Episode, quote: str, ai_no_signal: bool) -> str:
+    """Человекочитаемое «почему» — чтобы вердикт вызывал доверие, а не загадку."""
+    refs = ", ".join(c.raw for c in ep.citations) or "—"
+    flags = set(h.flags) | (set(ai.flags) if ai else set())
+    parts: list[str] = []
+
+    if final == Status.FABRICATED:
+        parts.append(f"Ссылка {refs} не найдена в списке литературы — источник, "
+                     f"вероятно, выдуман или неверно пронумерован.")
+    elif final == Status.SOURCE_MISSING:
+        parts.append(f"Источник {refs} недоступен для сверки: файл не загружен и "
+                     f"не удалось скачать из сети. Проверить соответствие невозможно.")
+    elif final == Status.SUPPORTED:
+        parts.append("Источник прямо подтверждает утверждение — найдено дословное совпадение.")
+    elif final == Status.PARTIAL:
+        parts.append("Источник подтверждает утверждение лишь частично или с расхождением "
+                     "(нет точной дословной опоры на весь тезис).")
+    elif final == Status.NOT_SUPPORTED:
+        if ai and "quote_not_in_source" in ai.flags:
+            parts.append("ИИ не смог привести из источника дословную цитату в подтверждение — "
+                         "источник не содержит этого утверждения.")
+        else:
+            parts.append("Источник найден, но не содержит данного утверждения "
+                         "(низкое пересечение по смыслу).")
+
+    if any(str(f).startswith("author_year_mismatch") for f in flags):
+        parts.append("Год в ссылке не совпадает с годом источника.")
+    if ai_no_signal and final not in (Status.FABRICATED, Status.SOURCE_MISSING):
+        parts.append("ИИ-сверка недоступна — решение по детерминированным эвристикам.")
+    return " ".join(parts)
 
 
 _WEIGHT = {Status.SUPPORTED: 1.0, Status.PARTIAL: 0.5, Status.SOURCE_MISSING: 0.0,

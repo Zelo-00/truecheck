@@ -173,4 +173,24 @@
   document.querySelectorAll(".ep-text").forEach((el) => {
     el.innerHTML = el.innerHTML.replace(cite, '<span class="cite-hl">$1</span>');
   });
+
+  // ---- отчёт: печать и копирование ссылки (без inline-onclick → совместимо с CSP) ----
+  const printBtn = document.getElementById("print-btn");
+  if (printBtn) printBtn.addEventListener("click", () => window.print());
+
+  const copyBtn = document.getElementById("copy-link");
+  if (copyBtn) copyBtn.addEventListener("click", async () => {
+    const url = copyBtn.dataset.url || location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (e) {
+      const t = document.createElement("textarea");
+      t.value = url; document.body.appendChild(t); t.select();
+      try { document.execCommand("copy"); } catch (_) { /* noop */ }
+      t.remove();
+    }
+    const old = copyBtn.textContent;
+    copyBtn.textContent = "✓ Скопировано";
+    setTimeout(() => { copyBtn.textContent = old; }, 1500);
+  });
 })();

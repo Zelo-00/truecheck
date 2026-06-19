@@ -40,6 +40,12 @@
     <span class="hint">Назовите файлы по номеру в списке: <code>1.pdf</code>, <code>[2].docx</code>…</span>
   </label>
 
+  {% if auth_required %}
+  <hr class="sep">
+  <label class="block-label">Токен доступа <span class="muted">(требуется на этом сервере)</span></label>
+  <input class="field" type="password" name="token" placeholder="Введите токен доступа" autocomplete="off">
+  {% endif %}
+
   <div class="row between">
     <label class="toggle {{ '' if ai_available else 'disabled' }}">
       <input type="checkbox" name="use_ai" value="on" {{ 'checked' if ai_available else 'disabled' }}>

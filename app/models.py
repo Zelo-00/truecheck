@@ -90,7 +90,8 @@ class EpisodeVerdict:
     heuristic_score: float = 0.0   # 0..1, уверенность эвристик в подтверждении
     ai: Optional[MatchJudgement] = None
     quote: str = ""                # дословная цитата-обоснование (если есть)
-    reasons: list[str] = field(default_factory=list)  # человекочитаемые пояснения/флаги
+    explanation: str = ""          # человекочитаемое «почему» (для отчёта/доверия)
+    reasons: list[str] = field(default_factory=list)  # технические флаги/детали
 
 
 @dataclass
