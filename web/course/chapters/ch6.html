@@ -1,0 +1,121 @@
+<h1 id="s196" class="hx reveal">ЧАСТЬ VI. АГЕНТЫ ВНЕ CLI: СТРОИМ ПРОДУКТ</h1><p>До сих пор агент жил внутри Claude Code (терминал) или n8n (визуальный редактор). Но настоящая цель AI-инженера — агент, который работает <strong>сам</strong>, как сервис: принимает события, крутится по расписанию, отвечает в Telegram, обрабатывает очередь — без вашего присутствия. В этой части мы построим такого агента кодом и развернём на VPS, а затем соберём из нескольких агентов автономный каскад.</p><h2 id="s197" class="hx reveal">Модуль 20. Claude Agent SDK и Anthropic SDK: три способа построить агента</h2><p><strong>Чему вы научитесь:</strong> выбирать уровень абстракции для своего агента и писать агентный цикл на коде.</p><h3 id="s198" class="hx">Зачем это нужно</h3><p>«Построить агента» можно на разной высоте: от полного контроля над циклом до готового хостинга. Понимание трёх уровней позволяет не «изобретать велосипед» и не «тащить комбайн» там, где хватит функции.</p><h3 id="s199" class="hx">Три поверхности (surfaces)</h3><div class="tbl reveal"><table><thead><tr><th>Уровень</th><th>Что это</th><th>Когда брать</th></tr></thead><tbody><tr><td><strong>Один вызов API</strong></td><td>Запрос → ответ (классификация, суммаризация, извлечение)</td><td>Простая задача без многошаговости</td></tr><tr><td><strong>Workflow (tool use)</strong></td><td>Вы сами управляете циклом «вызов → инструмент → результат»</td><td>Многошаговые пайплайны с вашими инструментами</td></tr><tr><td><strong>Агент (Agent SDK / Managed Agents)</strong></td><td>Модель сама решает траекторию; цикл ведёт SDK или Anthropic</td><td>Открытые, плохо формализуемые задачи</td></tr></tbody></table></div><div class="co co-tip reveal"><div class="co-h"><span class="co-badge">Совет</span><span class="co-title">Начинайте с простого</span></div><div class="co-b"><p>Не каждая задача требует агента. Если хватает одного вызова или workflow — берите их: дешевле, быстрее, надёжнее. Агент — для задач, где модель должна сама исследовать и принимать решения (вспомните 4 критерия из модуля 10).</p></div></div><h3 id="s200" class="hx">Способ 1. Claude Agent SDK — каркас Claude Code в вашем коде</h3><p><strong>Claude Agent SDK</strong> — это тот же агентный движок, что и в Claude Code, но как библиотека для встраивания в ваше приложение (Python и TypeScript). Он даёт готовый агентный цикл с инструментами файловой системы, bash, поддержкой MCP, субагентов, хуков и скиллов — всё, что вы освоили в части II, но программно.</p><p>Идея использования (Python, концептуально):</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code># pip install claude-agent-sdk
+from claude_agent_sdk import query, ClaudeAgentOptions
+
+options = ClaudeAgentOptions(
+    system_prompt="Ты — агент, который наводит порядок в каталоге логов: "
+                  "анализирует .log файлы и пишет сводку в summary.md.",
+    allowed_tools=["Read", "Write", "Bash", "Grep"],   # минимум прав
+    # mcp_servers=[...], permission_mode=..., и т.д.
+)
+
+async for message in query(prompt="Сделай сводку по логам за сегодня", options=options):
+    print(message)</code></pre></div><p>Здесь Claude Code «помогает строить агента, работающего вне CLI» в прямом смысле: вы используете его же возможности (скиллы, субагенты, MCP, права) из своего сервиса. Точные сигнатуры и опции смотрите в официальной документации Agent SDK — API развивается.</p><div class="co co-note reveal"><div class="co-h"><span class="co-badge">Заметка</span><span class="co-title">Как Claude Code помогает строить таких агентов</span></div><div class="co-b"><p>Двояко. Во-первых, Claude Agent SDK — это и есть «движок Claude Code как библиотека». Во-вторых, сам Claude Code — отличный инструмент, чтобы <em>написать</em> код вашего агента: спроектировать, реализовать, протестировать. Вы строите агента с помощью агента.</p></div></div><h3 id="s201" class="hx">Способ 2. Anthropic SDK — полный контроль над циклом</h3><p>Когда нужен максимальный контроль (свои инструменты, проверки, human-in-the-loop, логирование каждого шага), используют прямой <strong>Anthropic SDK</strong> с tool use. Два варианта: автоматический «tool runner» и ручной цикл.</p><p>Автоматический tool runner (Python) — SDK сам ведёт цикл:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>import anthropic
+from anthropic import beta_tool
+
+client = anthropic.Anthropic()   # ключ из ANTHROPIC_API_KEY (в .env)
+
+@beta_tool
+def get_disk_usage(path: str) -&gt; str:
+    """Вернуть использование диска по пути.
+    Args:
+        path: путь к каталогу.
+    """
+    import shutil
+    total, used, free = shutil.disk_usage(path)
+    return f"used={used//2**30}GB free={free//2**30}GB"
+
+runner = client.beta.messages.tool_runner(
+    model="claude-opus-4-8",
+    max_tokens=16000,
+    tools=[get_disk_usage],
+    messages=[{"role": "user", "content": "Сколько занято на /var?"}],
+)
+for message in runner:
+    print(message)</code></pre></div><p>Ручной агентный цикл (Python) — когда нужно вклиниваться между шагами:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>messages = [{"role": "user", "content": user_input}]
+while True:
+    response = client.messages.create(
+        model="claude-opus-4-8", max_tokens=16000, tools=tools, messages=messages,
+    )
+    if response.stop_reason == "end_turn":
+        break
+    messages.append({"role": "assistant", "content": response.content})
+    tool_results = []
+    for block in response.content:
+        if block.type == "tool_use":
+            result = execute_tool(block.name, block.input)   # ваша реализация
+            tool_results.append({
+                "type": "tool_result", "tool_use_id": block.id, "content": result,
+            })
+    messages.append({"role": "user", "content": tool_results})</code></pre></div><div class="co co-imp reveal"><div class="co-h"><span class="co-badge">Важно</span><span class="co-title">Дешёвый каскад вне CLI — через OpenRouter</span></div><div class="co-b"><p>Anthropic SDK работает с моделями Claude. Если вы строите <strong>дешёвый каскад</strong> на open-моделях, используйте OpenAI-совместимый клиент, указывающий на OpenRouter (часть IV): тот же агентный цикл, но <code>client = OpenAI(base_url="https://openrouter.ai/api/v1", ...)</code> и модель вроде <code>deepseek/deepseek-v3.2</code>. Сильные шаги — на Claude через Anthropic SDK, массовые — на дешёвой модели через OpenRouter. Это и есть каскад в коде.</p></div></div><h3 id="s202" class="hx">Способ 3. Managed Agents — Anthropic ведёт цикл и держит песочницу</h3><p><strong>Managed Agents</strong> — серверная поверхность: вы создаёте сохранённую конфигурацию агента (модель, системный промпт, инструменты, MCP, скиллы), а Anthropic запускает сессии, провижинит изолированный контейнер для исполнения инструментов и стримит события. Подходит, когда не хотите держать собственный рантайм исполнения инструментов и нужен надёжный stateful-агент с рабочим пространством.</p><p>Обязательный порядок: <strong>сначала агент (один раз), потом сессии (на каждый запуск)</strong>.</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code># 1. Создать агента ОДИН раз, сохранить agent.id
+agent = client.beta.agents.create(
+    name="Log Analyst",
+    model="claude-opus-4-8",
+    system="Ты анализируешь логи и пишешь сводки.",
+    tools=[{"type": "agent_toolset_20260401"}],
+)
+# 2. На каждый запуск — сессия, ссылающаяся на agent.id
+session = client.beta.sessions.create(
+    agent=agent.id, environment_id=environment.id,
+)</code></pre></div><div class="co co-warn reveal"><div class="co-h"><span class="co-badge">Внимание</span><span class="co-title">Антипаттерн Managed Agents</span></div><div class="co-b"><p>Не вызывайте <code>agents.create()</code> на каждый запуск — это плодит «осиротевших» агентов и платит лишнюю задержку. Создайте агента один раз (в скрипте настройки), сохраните ID, и на каждый запуск создавайте только сессию.</p></div></div><h3 id="s203" class="hx">Чеклист модуля 20</h3><ul><li><span class="ck"></span>Понимаю три поверхности (вызов / workflow / агент) и когда какую брать.</li><li><span class="ck"></span>Знаю, что Claude Agent SDK = движок Claude Code как библиотека.</li><li><span class="ck"></span>Умею написать агентный цикл на Anthropic SDK (tool runner или ручной).</li><li><span class="ck"></span>Понимаю, как сделать дешёвый каскад через OpenRouter.</li><li><span class="ck"></span>Знаю порядок Managed Agents: агент один раз → сессии на каждый запуск.</li></ul><h3 id="s204" class="hx">Упражнения</h3><ol><li>Напишите простой workflow-агент на Anthropic SDK с одним своим инструментом (например, «прочитать погоду по городу» — заглушкой). <strong>Признак успеха:</strong> в логе видно, что агент вызвал ваш инструмент (tool_use) и использовал его результат в ответе.</li><li>Перепишите тот же цикл на OpenAI-совместимый клиент к OpenRouter с дешёвой моделью.</li></ol><h2 id="s205" class="hx reveal">Модуль 21. Деплой агента как сервиса на VPS</h2><p><strong>Чему вы научитесь:</strong> превращать скрипт-агент в постоянно работающий сервис: systemd/Docker, cron, вебхук, Telegram-бот как фронт.</p><h3 id="s206" class="hx">Зачем это нужно</h3><p>Скрипт, запущенный руками в терминале, умрёт, когда вы закроете SSH. Сервис работает всегда и сам перезапускается при сбое. Это финальный шаг «агент → продукт».</p><h3 id="s207" class="hx">Способ A. systemd-сервис</h3><p>Положите агента в <code>/home/deploy/agent/app.py</code> (виртуальное окружение, зависимости установлены). Создайте unit-файл <code>/etc/systemd/system/myagent.service</code>:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>[Unit]
+Description=My AI Agent
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/agent
+EnvironmentFile=/home/deploy/agent/.env
+ExecStart=/home/deploy/agent/.venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</code></pre></div><p>Активируйте:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>sudo systemctl daemon-reload
+sudo systemctl enable --now myagent
+sudo systemctl status myagent          # проверить
+journalctl -u myagent -f               # смотреть логи</code></pre></div><p>Теперь агент работает постоянно, переживает перезагрузку сервера и сам перезапускается при падении (<code>Restart=on-failure</code>).</p><h3 id="s208" class="hx">Способ B. Docker-контейнер</h3><p>Заверните агента в образ и запустите так же, как n8n. Преимущество — изоляция и переносимость. Минимальный <code>Dockerfile</code>:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+CMD ["python", "app.py"]</code></pre></div><p>Запуск: <code>docker build -t myagent . &amp;&amp; docker run -d --restart unless-stopped --env-file .env --name myagent myagent</code>.</p><h3 id="s209" class="hx">Способ C. По расписанию (cron)</h3><p>Если агент должен срабатывать периодически (раз в час проверить почту), не держите процесс постоянно — запускайте по cron:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>crontab -e
+# каждый час в :00 запускать агента
+0 * * * * /home/deploy/agent/.venv/bin/python /home/deploy/agent/check.py &gt;&gt; /home/deploy/agent/logs/cron.log 2&gt;&amp;1</code></pre></div><h3 id="s210" class="hx">Способ D. Вебхук-фронт</h3><p>Чтобы внешний мир (другой сервис, форма, GitHub) триггерил агента, поднимите лёгкий веб-сервер (FastAPI) с эндпоинтом, который при POST запускает агентный цикл:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>from fastapi import FastAPI, Request
+app = FastAPI()
+
+@app.post("/run")
+async def run(req: Request):
+    data = await req.json()
+    result = run_agent(data["task"])     # ваш агентный цикл
+    return {"result": result}</code></pre></div><p>Запускайте через <code>uvicorn</code> под systemd, закройте за обратным прокси с HTTPS и проверкой токена.</p><h3 id="s211" class="hx">Способ E. Telegram-бот как фронт (самый удобный)</h3><p>Telegram-бот — отличный «фронт» для личного агента: пишете боту в мессенджер, он выполняет агентный цикл и отвечает. Каркас на <code>python-telegram-bot</code>:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>from telegram.ext import Application, MessageHandler, filters
+
+async def on_message(update, context):
+    user_text = update.message.text
+    answer = run_agent(user_text)         # ваш агентный цикл (Anthropic/OpenRouter)
+    await update.message.reply_text(answer)
+
+app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+app.add_handler(MessageHandler(filters.TEXT &amp; ~filters.COMMAND, on_message))
+app.run_polling()</code></pre></div><p>Токен бота берётся у @BotFather, кладётся в <code>.env</code>, сервис — под systemd. Так у вас в кармане появляется личный агент, доступный из мессенджера 24/7.</p><div class="co co-warn reveal"><div class="co-h"><span class="co-badge">Внимание</span><span class="co-title">Безопасность бота</span></div><div class="co-b"><p>Ограничьте, кто может писать боту (проверка <code>update.effective_user.id</code> по белому списку), иначе любой найдёт его и будет тратить ваши токены. И никогда не кладите токен бота в код или публичный репозиторий.</p></div></div><div class="co co-ex reveal"><div class="co-h"><span class="co-badge">Пример из практики</span><span class="co-title">Наш сквозной проект</span></div><div class="co-b"><p>Теперь у «сортировщика входящих» есть постоянный фронт: вебхук (или Telegram) принимает сообщения 24/7, а сервис под systemd сам перезапускается при сбоях. Осталось собрать полный каскад с ролями и судьёй — это модуль 22 и капстоун.</p></div></div><h3 id="s212" class="hx">Чеклист модуля 21</h3><ul><li><span class="ck"></span>Умею запустить агента как systemd-сервис с автоперезапуском.</li><li><span class="ck"></span>Знаю Docker-вариант деплоя.</li><li><span class="ck"></span>Умею настроить cron для периодического агента.</li><li><span class="ck"></span>Поднял вебхук- или Telegram-фронт для агента.</li><li><span class="ck"></span>Ограничил доступ и защитил секреты.</li></ul><h3 id="s213" class="hx">Упражнения</h3><ol><li>Разверните своего агента из модуля 20 как systemd-сервис и убедитесь, что он переживает <code>reboot</code>.</li><li>Сделайте Telegram-бота-фронт с белым списком пользователей.</li></ol><h2 id="s214" class="hx reveal">Модуль 22. Каскад автономных агентов на вашем VPS</h2><p><strong>Чему вы научитесь:</strong> проектировать и разворачивать каскад из нескольких автономных агентов на одном сервере, следить за ним и считать стоимость.</p><h3 id="s215" class="hx">Зачем это нужно</h3><p>Это кульминация курса: всё вместе. Каскад автономных агентов на VPS — это система, которая принимает события, распределяет работу между специализированными агентами на разных (преимущественно дешёвых) моделях, исполняется надёжно и стоит копейки. Здесь сходятся инфраструктура (часть I), оркестрация (часть III), экономика моделей (часть IV) и деплой (этот модуль).</p><h3 id="s216" class="hx">Эталонная архитектура каскада на VPS</h3><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>            ВНЕШНИЙ МИР (почта, Telegram, вебхуки, расписание)
+                              │
+                       [ Шлюз / очередь ]      ← FastAPI вебхук или n8n + Redis
+                              │
+                   ┌──────────┴──────────┐
+                   │   АГЕНТ-РОУТЕР       │      ← дешёвая модель (Mistral Nemo)
+                   │  классификация       │        «куда направить?»
+                   └──────────┬──────────┘
+              ┌───────────────┼────────────────┐
+              ▼               ▼                ▼
+        [ВОРКЕР-A]       [ВОРКЕР-B]       [ВОРКЕР-C]    ← дешёвые модели (DeepSeek Flash,
+        извлечение       RAG по базе      эскалация       Mistral Small, Llama Scout)
+              └───────────────┼────────────────┘
+                              ▼
+                   ┌─────────────────────┐
+                   │  АГЕНТ-СУДЬЯ/СБОРКА   │      ← аккуратная модель (Claude Haiku / GPT-5 Mini)
+                   │  проверка + ответ     │        эскалация на сильную при провале
+                   └──────────┬──────────┘
+                              ▼
+                     ОТВЕТ / ДЕЙСТВИЕ (БД, API, сообщение)</code></pre></div><p>Принципы, которые вы уже знаете, в сборе:</p><ul><li><strong>Изоляция (часть III):</strong> у каждого агента — свой системный промпт (свод правил), свои инструменты (минимум прав), свой контекст. Роутер не умеет писать в БД; воркер не принимает решений об эскалации.</li><li><strong>Каскад/экономика (часть IV):</strong> 90% объёма — на дешёвых моделях; сильная модель подключается только когда судья забраковал результат.</li><li><strong>Передача контекста (часть III):</strong> агенты передают друг другу цель и сжатый результат, а не «сырые дампы».</li><li><strong>KSCR (часть III):</strong> каждый агент-роль имеет узкий, полный (высокий K), однозначный промпт — поэтому η высок, а C ≥ 0.8.</li></ul><h3 id="s217" class="hx">Чем оркестрировать</h3><p>Два практичных пути на одном VPS:</p><ol><li><strong>n8n как оркестратор</strong> (часть V): супервизор + под-воркфлоу, очередь на Redis. Меньше кода, визуально, легко менять.</li><li><strong>Свой код-оркестратор</strong> (этот раздел): FastAPI-шлюз кладёт задачи в очередь (Redis/БД), воркеры-сервисы под systemd забирают и исполняют агентные циклы. Больше контроля, лучше для сложной логики.</li></ol><p>Часто берут гибрид: n8n для интеграций и простых веток, свой код — для тяжёлой агентной логики, связанные через вебхуки.</p><div class="co co-ex reveal"><div class="co-h"><span class="co-badge">Пример из практики</span><span class="co-title">Минимальный автономный каскад на VPS</span></div><div class="co-b"><p>На сервере крутятся: Postgres (память и очередь), Redis (очередь n8n/воркеров), n8n (роутер + интеграции), 2–3 Python-воркера под systemd (специалисты), Telegram-бот (фронт). Всё в Docker/systemd, секреты в <code>.env</code> с <code>chmod 600</code>, файрвол закрыт, бэкап БД по cron. Стоимость инференса — единицы долларов в месяц при тысячах обработанных событий, потому что тяжёлая модель почти не вызывается.</p></div></div><h3 id="s218" class="hx">Сколько это стоит: расчёт на 1000 событий</h3><p>Бриф курса требует уметь <strong>считать стоимость</strong>. Покажем на числах. Формула простая:</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>стоимость_роли = (вх_токены/1e6 × цена_вх) + (вых_токены/1e6 × цена_вых)
+стоимость_события = Σ_по_ролям (стоимость_роли × доля_вызова роли)</code></pre></div><p>Возьмём каскад «сортировщик входящих», 1000 событий. Цены — приблизительные, $/1М токенов (часть IV):</p><div class="tbl reveal"><table><thead><tr><th>Роль</th><th>Модель (цена вх/вых)</th><th>Токены вх/вых на событие</th><th>Доля</th><th>$/1000 событий</th></tr></thead><tbody><tr><td>Роутер</td><td>Mistral Nemo (0.02/0.03)</td><td>400 / 50</td><td>100%</td><td>≈ $0.01</td></tr><tr><td>Воркер</td><td>DeepSeek V4 Flash (0.09/0.18)</td><td>1500 / 600</td><td>100%</td><td>≈ $0.24</td></tr><tr><td>Судья</td><td>Claude Haiku (1/5)</td><td>1000 / 300</td><td>100%</td><td>≈ $2.50</td></tr><tr><td>Эскалация</td><td>Opus (5/25)</td><td>3000 / 1500</td><td>8%</td><td>≈ $4.20</td></tr><tr><td><strong>Итого каскад</strong></td><td></td><td></td><td></td><td><strong>≈ $6.95</strong></td></tr></tbody></table></div><p>Теперь сравним с наивным подходом — <strong>«всё на Opus»</strong> (каждое событие = один вызов Opus, ~3000 вх + 1500 вых):</p><div class="code reveal"><div class="code-bar"><i></i><i></i><i></i></div><pre><code>Всё на Opus: (3M × $5) + (1.5M × $25) = $15 + $37.5 = $52.5 / 1000 событий
+Каскад:                                                ≈ $6.95 / 1000 событий
+Экономия: ≈ 7.5×</code></pre></div><div class="co co-ex reveal"><div class="co-h"><span class="co-badge">Пример из практики</span><span class="co-title">Как раздвинуть экономию ещё сильнее</span></div><div class="co-b"><p>В этом расчёте дороже всего — судья (Haiku) и эскалация. Заменив судью на более дешёвую модель (GPT-5 Mini 0.25/2 или DeepSeek V3.2 0.23/0.34) и снизив долю эскалации до 3–5% за счёт хорошего роутера, тот же каскад выходит на <strong>15–20× дешевле</strong> «всё на Opus». Плюс prompt caching на неизменном системном промпте срезает ещё 60–80% входных токенов. Вот откуда берётся «на порядок дешевле».</p></div></div><p>Главный вывод: считайте по этой формуле <strong>до</strong> запуска, и вы увидите, какая роль «съедает» бюджет. Обычно это судья и эскалация — туда и направляйте оптимизацию.</p><h3 id="s219" class="hx">Какие агенты и модели лучше использовать</h3><ul><li><strong>Роутер:</strong> самая дешёвая надёжная модель (Mistral Nemo, DeepSeek V4 Flash). Задача простая — классификация.</li><li><strong>Воркеры:</strong> дешёвые рабочие лошадки под тип задачи (DeepSeek V3.2 — универсал; Mistral Small — компактно; Llama Scout — длинный контекст; Qwen3 Coder — код).</li><li><strong>Суммаризатор:</strong> Gemini Flash-Lite (дёшево, длинный вход) или Claude Haiku (аккуратность).</li><li><strong>Судья/сборка:</strong> Claude Haiku или GPT-5 Mini (надёжный формат, следование инструкциям).</li><li><strong>Эскалация (трудные случаи):</strong> сильная фронтир-модель (Claude Opus / DeepSeek V4 Pro) — но только по необходимости.</li></ul><h3 id="s220" class="hx">Мониторинг и надёжность</h3><ul><li><strong>Логи:</strong> каждый агент пишет структурированный лог (что получил, что сделал, сколько токенов). <code>journalctl -u &lt;сервис&gt; -f</code> и/или централизованный лог-файл.</li><li><strong>Здоровье:</strong> <code>docker ps</code>, <code>systemctl status</code>, <code>df -h</code> (диск под логами), <code>free -h</code>. Привычка ежедневного взгляда.</li><li><strong>Стоимость:</strong> считайте токены на каждом шаге; у каждого API-ключа — лимит расхода (часть I). Дешёвый «судья» перед дорогой эскалацией экономит больше всего.</li><li><strong>Устойчивость:</strong> <code>Restart=on-failure</code>, fallback-цепочки в OpenRouter, retry с экспоненциальной задержкой на 429/5xx, очередь, которая переживёт перезапуск.</li><li><strong>Безопасность:</strong> изоляция (Docker), минимум прав у каждого агента, human-in-the-loop на необратимых действиях (отправка денег, удаление, публикация).</li></ul><h3 id="s221" class="hx">Чеклист модуля 22</h3><ul><li><span class="ck"></span>Понимаю эталонную архитектуру каскада (шлюз → роутер → воркеры → судья).</li><li><span class="ck"></span>Знаю, какие модели ставить на какие роли.</li><li><span class="ck"></span>Выбрал оркестратор (n8n / свой код / гибрид).</li><li><span class="ck"></span>Настроил мониторинг, лимиты расхода и устойчивость.</li><li><span class="ck"></span>Заложил изоляцию и human-in-the-loop на опасных действиях.</li></ul><h3 id="s222" class="hx">Упражнения</h3><ol><li>Спроектируйте полный каскад под свою реальную задачу: нарисуйте схему, распишите роли, модели, инструменты, оценку стоимости на 1000 событий.</li><li>Разверните минимальную версию (роутер + 1 воркер + судья) на VPS и прогоните 10 тестовых событий, замерив расход токенов.</li></ol><h3 id="s223" class="hx">Итог Части VI</h3><p>Вы научились строить агентов вне CLI на трёх уровнях (Agent SDK, Anthropic/OpenRouter SDK, Managed Agents), разворачивать их как сервисы (systemd, Docker, cron, вебхук, Telegram) и собирать полноценный автономный каскад на VPS с мониторингом и контролем стоимости. Это и есть AI-инжиниринг в действии. Осталось подключить внешнюю экосистему инструментов — и собрать капстоун.</p><div class="chap-end" data-idx="6"></div>
