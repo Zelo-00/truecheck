@@ -40,22 +40,27 @@
  var content=document.getElementById("content"),hero=document.querySelector(".hero"),chaphead=document.getElementById("chaphead");
  var cms=[].slice.call(document.querySelectorAll(".cm"));
  var total=cms.length, cache={}, current=-1;
- var DONE="ai_course_done_v1",LASTC="ai_course_lastc_v1",LASTY="ai_course_lasty_v1";
+ var DONE="ai_course_done_v1",LASTC="ai_course_lastc_v1",LASTY="ai_course_lasty_v1",CHK="ai_course_checks_v1";
  function getDone(){try{return JSON.parse(localStorage.getItem(DONE)||"[]");}catch(_){return[];}}
  function setDoneArr(a){try{localStorage.setItem(DONE,JSON.stringify(a));}catch(_){}}
  function markDone(i){var d=getDone();if(d.indexOf(i)<0){d.push(i);setDoneArr(d);renderProgress();}}
+ function getChecks(){try{return JSON.parse(localStorage.getItem(CHK)||"{}");}catch(_){return {};}}
+ function setChecks(o){try{localStorage.setItem(CHK,JSON.stringify(o));}catch(_){}}
  function chName(i){var c=cms[i];return c?c.querySelector(".cm-name").textContent:"";}
 
  var hid2idx={}; document.querySelectorAll(".cm-pt").forEach(function(a){hid2idx[a.getAttribute("href").slice(1)]=+a.dataset.idx;});
 
  function renderProgress(){
    var d=getDone(),pct=total?Math.round(d.length/total*100):0,el=document.getElementById("tocprog");
+   var has=d.length||Object.keys(getChecks()).length;
    if(el){el.innerHTML='<div class="ring" style="--p:'+pct+'"><span>'+pct+'%</span></div>'+
      '<div class="ring-tx"><b>Пройдено '+d.length+' из '+total+'</b><em>'+(total-d.length)+' осталось</em>'+
-     (d.length?'<button class="reset-btn js-reset" type="button">Сбросить прогресс</button>':'')+'</div>';
+     (has?'<button class="reset-btn js-reset" type="button">Сбросить прогресс</button>':'')+'</div>';
      var rb=el.querySelector(".js-reset");
-     if(rb)rb.addEventListener("click",function(){if(confirm("Сбросить весь прогресс по курсу?")){
-       setDoneArr([]);try{localStorage.removeItem(LASTC);localStorage.removeItem(LASTY);}catch(_){}renderProgress();}});}
+     if(rb)rb.addEventListener("click",function(){if(confirm("Сбросить весь прогресс по курсу (включая отметки в чек-листах)?")){
+       setDoneArr([]);try{localStorage.removeItem(LASTC);localStorage.removeItem(LASTY);localStorage.removeItem(CHK);}catch(_){}
+       content.querySelectorAll(".ck.on").forEach(function(x){x.classList.remove("on");x.setAttribute("aria-checked","false");var l=x.closest("li");if(l)l.classList.remove("done");});
+       renderProgress();}});}
    cms.forEach(function(c){c.classList.toggle("done",d.indexOf(+c.dataset.idx)>=0);});
  }
 
@@ -77,6 +82,18 @@
        if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done,done);}
        else{var t=document.createElement("textarea");t.value=txt;document.body.appendChild(t);t.select();try{document.execCommand("copy");}catch(_){}t.remove();done();}});
    });
+   // интерактивные чек-листы: тап/клик/Enter отмечает пункт, отметки сохраняются
+   var checks=getChecks();
+   content.querySelectorAll(".ck").forEach(function(ck){
+     var key=ck.dataset.k,li=ck.closest("li"); if(!li)return;
+     li.classList.add("ck-li");
+     if(key&&checks[key]){ck.classList.add("on");ck.setAttribute("aria-checked","true");li.classList.add("done");}
+     var toggle=function(){var on=ck.classList.toggle("on");ck.setAttribute("aria-checked",on?"true":"false");li.classList.toggle("done",on);
+       var c=getChecks();if(key){if(on)c[key]=1;else delete c[key];setChecks(c);}renderProgress();};
+     li.addEventListener("click",function(e){if(e.target.closest("a,button"))return;toggle();});
+     ck.addEventListener("keydown",function(e){if(e.key===" "||e.key==="Enter"){e.preventDefault();toggle();}});
+   });
+
    // scrollspy по пунктам активной главы
    if(spyIO)spyIO.disconnect();
    var pts={};document.querySelectorAll('.cm-pt[data-idx="'+current+'"]').forEach(function(a){pts[a.getAttribute("href").slice(1)]=a;});

@@ -172,9 +172,14 @@ main.doc:focus{outline:none}
 .doc ul li::before{content:"";position:absolute;left:2px;top:9px;width:7px;height:7px;border-radius:50%;
  background:linear-gradient(135deg,var(--accent),var(--accent2))}
 @supports selector(:has(*)){.doc ul li:has(.ck){padding-left:28px}.doc ul li:has(.ck)::before{display:none}}
-.ck{position:absolute;left:0;top:2px;width:18px;height:18px;border-radius:6px;border:2px solid rgba(10,16,32,.22);background:#fff}
+.ck{position:absolute;left:0;top:1px;width:20px;height:20px;border-radius:6px;border:2px solid rgba(10,16,32,.22);background:#fff;cursor:pointer;transition:background .15s,border-color .15s}
+.ck:hover{border-color:var(--accent)}
+.ck:focus-visible{outline:3px solid rgba(10,132,255,.45);outline-offset:2px}
 .ck.on{border-color:var(--ok);background:var(--ok)}
-.ck.on::after{content:"✓";position:absolute;inset:-2px;color:#fff;font-size:13px;font-weight:900;display:grid;place-items:center}
+.ck.on::after{content:"✓";position:absolute;inset:-2px;color:#fff;font-size:14px;font-weight:900;display:grid;place-items:center}
+.ck-li{cursor:pointer;-webkit-user-select:none;user-select:none;border-radius:8px;margin-left:-6px;padding-left:28px!important;transition:background .15s,opacity .15s}
+.ck-li:hover{background:rgba(10,132,255,.05)}
+.ck-li.done{opacity:.62}
 
 .code{margin:16px 0;border-radius:var(--r-sm);overflow:hidden;box-shadow:var(--shadow-soft);background:#1b2130}
 .code-bar{display:flex;gap:7px;padding:11px 14px;background:#141a27;border-bottom:1px solid rgba(255,255,255,.06);align-items:center}
