@@ -113,8 +113,9 @@
    var f=chaphead.querySelector(".js-fwd");if(f)f.addEventListener("click",function(){go(i+1);});
  }
 
- function setActive(i){cms.forEach(function(c){var on=(+c.dataset.idx===i);c.classList.toggle("active",on);
-   var h=c.querySelector(".cm-head");if(h)h.setAttribute("aria-expanded",on?"true":"false");});}
+ function setActive(i){cms.forEach(function(c){c.classList.toggle("active",+c.dataset.idx===i);});}
+ function openChapter(i){var c=cms[i];if(c&&!c.classList.contains("open")){c.classList.add("open");
+   var h=c.querySelector(".cm-head");if(h)h.setAttribute("aria-expanded","true");}}
 
  function fetchChapter(i,cb){
    if(cache[i]!==undefined){cb(cache[i]);return;}
@@ -130,7 +131,7 @@
    fetchChapter(i,function(htmlStr){
      current=i; content.innerHTML=htmlStr;
      if(hero)hero.style.display=(i===0?"":"none");
-     setChapHead(i); setActive(i); enhance();
+     setChapHead(i); setActive(i); openChapter(i); enhance();
      try{localStorage.setItem(LASTC,i);}catch(_){}
      if(hid){var t=document.getElementById(hid);if(t){t.scrollIntoView();window.scrollBy(0,-70);}else window.scrollTo(0,0);}
      else if(ry>0){setTimeout(function(){window.scrollTo(0,ry);},60);}
@@ -140,8 +141,10 @@
    });
  }
 
- // навигация в меню
- cms.forEach(function(c){var h=c.querySelector(".cm-head");if(h)h.addEventListener("click",function(){go(+c.dataset.idx);});});
+ // клик по главе — раскрыть/свернуть подпункты (toggle); меню не закрывается, перехода нет
+ cms.forEach(function(c){var h=c.querySelector(".cm-head");if(!h)return;
+   h.addEventListener("click",function(){var op=c.classList.toggle("open");h.setAttribute("aria-expanded",op?"true":"false");});});
+ // клик по подпункту — перейти туда (и закрыть мобильное меню)
  document.querySelectorAll(".cm-pt").forEach(function(a){a.addEventListener("click",function(e){e.preventDefault();go(+a.dataset.idx,a.getAttribute("href").slice(1));});});
  // переход по hash из других мест (ссылки внутри текста ведут на #sN)
  addEventListener("hashchange",function(){var hid=location.hash.slice(1);if(hid2idx[hid]!==undefined&&hid2idx[hid]!==current)go(hid2idx[hid],hid);});
