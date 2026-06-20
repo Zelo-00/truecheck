@@ -153,8 +153,43 @@
   if (form) {
     form.addEventListener("submit", () => {
       const btn = form.querySelector("button[type=submit]");
-      if (btn) { btn.disabled = true; btn.textContent = "Проверяем…"; btn.classList.add("loading"); }
+      if (btn) { btn.disabled = true; btn.textContent = "Отправляем…"; btn.classList.add("loading"); }
     });
+  }
+
+  // ---- страница прогресса: опрос /status и переход на отчёт ----
+  const prog = document.getElementById("progress");
+  if (prog) {
+    const job = prog.dataset.job;
+    const fill = document.getElementById("prog-fill");
+    const pct = document.getElementById("prog-pct");
+    const state = document.getElementById("prog-state");
+    const sub = document.getElementById("prog-sub");
+    const errBox = document.getElementById("prog-err");
+    const back = document.getElementById("prog-back");
+    const poll = async () => {
+      try {
+        const r = await fetch("/status/" + job, { cache: "no-store" });
+        if (!r.ok) throw new Error("status " + r.status);
+        const d = await r.json();
+        fill.style.width = d.progress + "%";
+        pct.textContent = d.progress + "%";
+        if (d.total > 0) sub.textContent = `Проверено эпизодов: ${d.done} из ${d.total}`;
+        if (d.state === "running") state.textContent = "Сверка…";
+        if (d.state === "done") {
+          state.textContent = "Готово"; fill.style.width = "100%"; pct.textContent = "100%";
+          window.location.href = "/report/" + job; return;
+        }
+        if (d.state === "error") {
+          state.textContent = "Ошибка"; fill.style.width = "100%";
+          errBox.hidden = false; back.hidden = false;
+          errBox.textContent = d.error || "Не удалось выполнить проверку.";
+          return;
+        }
+      } catch (e) { /* временный сбой — повторим */ }
+      setTimeout(poll, 1000);
+    };
+    poll();
   }
 
   // ---- отчёт: фильтр эпизодов по статусу (клик по чипу) ----

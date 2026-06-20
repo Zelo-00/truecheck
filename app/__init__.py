@@ -4,7 +4,7 @@
 Сеть и ИИ изолированы в sources.py / llm.py / verifier.py.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
 APP_NAME = "TrueCheck"
 APP_TAGLINE = "Проверка текста на соответствие источникам"
 AUTHOR = "Zerno"

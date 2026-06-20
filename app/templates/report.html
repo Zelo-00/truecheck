@@ -9,8 +9,9 @@
     <p class="muted">{{ rep.created_at }} · ИИ-сверка: {{ 'включена' if rep.ai_used else 'выключена' }}</p>
     <p class="verdict">{{ rep.verdict_text }}</p>
     <div class="dl">
-      <button class="btn ghost" type="button" id="copy-link" data-url="{{ request.url }}">Скопировать ссылку</button>
-      <a class="btn ghost" href="/api/report/{{ rep.job_id }}.md">Скачать .md</a>
+      <button class="btn ghost" type="button" id="copy-link" data-url="{{ report_url | default('') }}">Скопировать ссылку</button>
+      <a class="btn ghost" href="/api/report/{{ rep.job_id }}.md">.md</a>
+      <a class="btn ghost" href="/api/report/{{ rep.job_id }}.docx">.docx</a>
       <a class="btn ghost" href="/api/report/{{ rep.job_id }}.json">JSON</a>
       <button class="btn ghost" type="button" id="print-btn">Печать / PDF</button>
     </div>

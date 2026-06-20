@@ -48,15 +48,58 @@ def to_markdown(rep: Report) -> str:
     return "\n".join(lines)
 
 
+def to_docx_bytes(rep: Report) -> bytes:
+    """Серверная генерация .docx-отчёта (python-docx)."""
+    import io
+
+    from docx import Document  # ленивый импорт
+
+    doc = Document()
+    doc.add_heading(f"Отчёт сверки: {rep.doc_name}", level=0)
+    doc.add_paragraph(f"Дата: {rep.created_at}")
+    doc.add_paragraph(f"Соответствие источникам: {rep.score}%")
+    doc.add_paragraph(f"Вероятность «ИИ-генерация / литература не соответствует»: "
+                      f"{rep.ai_generated_likelihood}%")
+    doc.add_paragraph(f"ИИ-сверка: {'включена' if rep.ai_used else 'выключена'}")
+    doc.add_paragraph(rep.verdict_text)
+
+    doc.add_heading(f"Эпизоды ({len(rep.episodes)})", level=1)
+    for ep in rep.episodes:
+        v = ep.verdict
+        doc.add_heading(f"Эпизод {ep.index + 1} — {v.status.ru}", level=2)
+        doc.add_paragraph(ep.text)
+        doc.add_paragraph("Ссылки: " + (", ".join(c.raw for c in ep.citations) or "—"))
+        if v.explanation:
+            doc.add_paragraph("Объяснение: " + v.explanation)
+        if v.quote:
+            p = doc.add_paragraph()
+            p.add_run(f"Цитата из источника: «{v.quote}»").italic = True
+
+    doc.add_heading("Источники", level=1)
+    for s in rep.sources:
+        doc.add_paragraph(f"[{s.key}] {s.bib_text}  — {s.origin} ({s.note})")
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+
 def save(rep: Report) -> dict:
-    """Сохраняет JSON и Markdown в REPORTS_DIR и заносит в индекс. Возвращает пути."""
+    """Сохраняет JSON / Markdown / DOCX в REPORTS_DIR. Возвращает пути."""
     config.ensure_dirs()
     base = os.path.join(config.REPORTS_DIR, rep.job_id)
     with open(base + ".json", "w", encoding="utf-8") as f:
         f.write(to_json(rep))
     with open(base + ".md", "w", encoding="utf-8") as f:
         f.write(to_markdown(rep))
-    return {"json": base + ".json", "md": base + ".md"}
+    paths = {"json": base + ".json", "md": base + ".md"}
+    try:
+        with open(base + ".docx", "wb") as f:
+            f.write(to_docx_bytes(rep))
+        paths["docx"] = base + ".docx"
+    except Exception:  # noqa: BLE001 — docx не критичен, отчёт уже сохранён
+        pass
+    return paths
 
 
 def _index_path() -> str:

@@ -59,21 +59,29 @@ def fetch_bytes(url: str) -> tuple[Optional[bytes], str]:
         return None, ""
     try:
         import httpx  # ленивый импорт
+        cap = config.FETCH_MAX_MB * 1024 * 1024
         with httpx.Client(follow_redirects=False, timeout=config.FETCH_TIMEOUT,
                           headers=_UA) as cli:
             cur = url
             for _ in range(config.FETCH_MAX_REDIRECTS + 1):
-                r = cli.get(cur)
-                if r.status_code in (301, 302, 303, 307, 308):
-                    loc = r.headers.get("location", "")
-                    nxt = urljoin(cur, loc) if loc else ""
-                    if not nxt or not _is_public_url(nxt):
-                        log.warning("redirect заблокирован (SSRF?): %s -> %s", cur, nxt)
-                        return None, ""
-                    cur = nxt
-                    continue
-                r.raise_for_status()
-                return r.content, r.headers.get("content-type", "")
+                with cli.stream("GET", cur) as r:
+                    if r.status_code in (301, 302, 303, 307, 308):
+                        loc = r.headers.get("location", "")
+                        nxt = urljoin(cur, loc) if loc else ""
+                        if not nxt or not _is_public_url(nxt):
+                            log.warning("redirect заблокирован (SSRF?): %s -> %s", cur, nxt)
+                            return None, ""
+                        cur = nxt
+                        continue
+                    r.raise_for_status()
+                    # потоковое чтение с обрывом по лимиту (анти-DoS)
+                    buf = bytearray()
+                    for chunk in r.iter_bytes():
+                        buf += chunk
+                        if len(buf) > cap:
+                            log.warning("ответ > %d МБ, оборван: %s", config.FETCH_MAX_MB, cur)
+                            return None, ""
+                    return bytes(buf), r.headers.get("content-type", "")
             log.warning("слишком много редиректов: %s", url)
             return None, ""
     except Exception as e:  # noqa: BLE001

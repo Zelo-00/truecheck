@@ -85,10 +85,20 @@ def _read_rtf(data: bytes) -> str:
     return re.sub(r"[ \t]+", " ", text)
 
 
+def _zip_guard(zf) -> None:
+    """Анти zip-бомба: суммарный распакованный размер не должен превышать лимит."""
+    from . import config  # ленивый импорт, чтобы ядро оставалось лёгким
+    total = sum(i.file_size for i in zf.infolist())
+    cap = config.ZIP_MAX_UNCOMPRESSED_MB * 1024 * 1024
+    if total > cap:
+        raise ValueError(f"архив распаковывается в {total} байт (> {cap}) — отклонён")
+
+
 def _read_odt(data: bytes) -> str:
     import io
     import zipfile  # ленивый импорт
     with zipfile.ZipFile(io.BytesIO(data)) as z:
+        _zip_guard(z)
         xml = z.read("content.xml").decode("utf-8", errors="replace")
     xml = re.sub(r"(?i)</text:p>|</text:h>", "\n", xml)
     return re.sub(r"<[^>]+>", "", xml)
@@ -99,6 +109,7 @@ def _read_epub(data: bytes) -> str:
     import zipfile  # ленивый импорт
     out: list[str] = []
     with zipfile.ZipFile(io.BytesIO(data)) as z:
+        _zip_guard(z)
         for n in z.namelist():
             if n.lower().endswith((".xhtml", ".html", ".htm")):
                 out.append(html_to_text(z.read(n).decode("utf-8", errors="replace")))
@@ -124,7 +135,11 @@ def _decode(data: bytes) -> str:
 
 def _read_docx(data: bytes) -> str:
     import io
+    import zipfile
+
     from docx import Document  # ленивый импорт
+    with zipfile.ZipFile(io.BytesIO(data)) as z:   # docx — это zip; анти zip-бомба
+        _zip_guard(z)
     doc = Document(io.BytesIO(data))
     parts = [p.text for p in doc.paragraphs]
     # таблицы тоже могут содержать список литературы

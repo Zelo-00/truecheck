@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Проверка… · {{ app_name }}{% endblock %}
+{% block content %}
+<section class="hero sm">
+  <h1>Идёт проверка</h1>
+  <p class="lede">{{ doc_name }}</p>
+</section>
+
+<div class="card pad prog" id="progress" data-job="{{ job_id }}">
+  <div class="prog-row">
+    <span class="prog-state" id="prog-state">Запуск…</span>
+    <span class="prog-pct" id="prog-pct">0%</span>
+  </div>
+  <div class="prog-track"><i id="prog-fill"></i></div>
+  <p class="muted prog-sub" id="prog-sub">Разбор текста и привязка источников…</p>
+  <div class="alert prog-err" id="prog-err" hidden></div>
+  <div class="prog-back" id="prog-back" hidden><a class="btn" href="/">← Новая проверка</a></div>
+</div>
+{% endblock %}

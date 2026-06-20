@@ -1,6 +1,10 @@
 """«Злые» тесты реальных границ — то, на чём движок раньше ломался."""
-from app import extract, grader, report as report_mod
-from app.grader import _best_excerpt
+import io
+import zipfile
+
+import pytest
+
+from app import config, extract, grader, report as report_mod
 from app.models import Citation, Episode, Report, SourceRef, Status
 from app.sources import _assign_files
 from app.verifier import relevant_window
@@ -13,17 +17,6 @@ def test_window_covers_tail_of_long_source():
     assert len(src) > 8000
     win = relevant_window(fact, src, max_chars=4000)
     assert "сто один килопаскаль" in win
-
-
-def test_best_excerpt_picks_relevant_not_longest():
-    ep = Episode(index=0, text="квантовая запутанность фотонов в оптоволокне",
-                 citations=[Citation(raw="[1]", kind="numeric", ref_key="1"),
-                            Citation(raw="[2]", kind="numeric", ref_key="2")])
-    long_irrelevant = SourceRef(key="1", content="история древнего рима и легионы. " * 500)
-    short_relevant = SourceRef(key="2",
-                               content="доказана квантовая запутанность фотонов в оптоволокне на 100 км")
-    ex = _best_excerpt(ep, {"1": long_irrelevant, "2": short_relevant})
-    assert "запутанность фотонов" in ex     # выбран релевантный, не длиннейший
 
 
 def test_assign_files_uses_upload_order_not_alphabet():
@@ -54,6 +47,28 @@ def test_every_verdict_has_explanation():
     rep = grader.build_report("jy", "d", eps, srcs, use_ai=False)
     assert rep.episodes[0].verdict.status == Status.FABRICATED
     assert "выдуман" in rep.episodes[0].verdict.explanation.lower()
+
+
+def test_multi_citation_best_source_wins():
+    # эпизод ссылается на [1] (нерелевантный) и [2] (подтверждает) → итог по [2]
+    ep = Episode(index=0, text='как сказано «энергия не возникает из ничего» [1, 2]',
+                 citations=[Citation(raw="[1]", kind="numeric", ref_key="1"),
+                            Citation(raw="[2]", kind="numeric", ref_key="2")])
+    s1 = SourceRef(key="1", content="совсем про другое: история древнего рима и легионы")
+    s2 = SourceRef(key="2", content="физика: энергия не возникает из ничего и не исчезает")
+    v = grader.grade_episode(ep, {"1": s1, "2": s2}, use_ai=False)
+    assert v.status == Status.SUPPORTED
+    assert "[2]" in v.explanation        # указано, какой источник подтвердил
+
+
+def test_zip_guard_rejects_oversized(monkeypatch):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("content.xml", "<x>" + "данные " * 100 + "</x>")
+    monkeypatch.setattr(config, "ZIP_MAX_UNCOMPRESSED_MB", 0)   # любой размер > лимита
+    with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as z:
+        with pytest.raises(ValueError):
+            extract._zip_guard(z)
 
 
 def test_history_is_session_scoped():

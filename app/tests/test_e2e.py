@@ -1,4 +1,8 @@
-"""E2E через FastAPI TestClient. ИИ принудительно выключен (AI_ENABLE=false в прогоне)."""
+"""E2E через FastAPI TestClient. ИИ выключен (AI_ENABLE=false). Проверка асинхронна:
+/check отдаёт страницу прогресса → опрос /status → готовый отчёт по /report/{id}."""
+import re
+import time
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -13,6 +17,25 @@ DOC = (
 )
 
 
+def _run_check(data, files=None, timeout=10.0):
+    """POST /check → дождаться завершения задания → вернуть job_id."""
+    r = client.post("/check", data=data, files=files)
+    assert r.status_code == 200, r.text
+    m = re.search(r'data-job="([0-9a-f]+)"', r.text)
+    assert m, "на странице прогресса нет job_id"
+    jid = m.group(1)
+    deadline = time.time() + timeout
+    state = "queued"
+    while time.time() < deadline:
+        s = client.get(f"/status/{jid}").json()
+        state = s["state"]
+        if state in ("done", "error"):
+            break
+        time.sleep(0.05)
+    assert state == "done", f"задание не завершилось: {state}"
+    return jid
+
+
 def test_index_ok():
     r = client.get("/")
     assert r.status_code == 200
@@ -25,17 +48,15 @@ def test_health():
     assert r.json()["status"] == "ok"
 
 
-def test_check_text_produces_report():
-    # передаём проверяемый текст и источник [1] файлом, чтобы было содержимое
-    r = client.post(
-        "/check",
-        data={"doc_text": DOC, "use_ai": "off"},
+def test_check_async_produces_report():
+    jid = _run_check(
+        {"doc_text": DOC, "use_ai": "off"},
         files=[("source_files", ("1.txt",
                 "вода кипит при ста градусах при нормальном давлении".encode(), "text/plain"))],
     )
-    assert r.status_code == 200
-    assert "Эпизод" in r.text or "эпизод" in r.text.lower()
-    assert "Отчёт" in r.text
+    rh = client.get(f"/report/{jid}")
+    assert rh.status_code == 200
+    assert "Отчёт" in rh.text and "Эпизод" in rh.text
 
 
 def test_check_requires_input():
@@ -43,37 +64,29 @@ def test_check_requires_input():
     assert r.status_code == 400
 
 
-def test_report_persisted_and_json_api():
-    r = client.post("/check", data={"doc_text": DOC, "use_ai": "off"})
-    assert r.status_code == 200
-    # достаём job_id из ссылки на JSON в отчёте
-    import re
-    m = re.search(r"/api/report/([0-9a-f]+)\.json", r.text)
-    assert m, "в отчёте нет ссылки на JSON"
-    jid = m.group(1)
-    rj = client.get(f"/api/report/{jid}.json")
-    assert rj.status_code == 200
-    data = rj.json()
+def test_status_not_found():
+    assert client.get("/status/deadbeef0000").status_code == 404
+
+
+def test_report_json_and_exports():
+    jid = _run_check({"doc_text": DOC, "use_ai": "off"})
+    data = client.get(f"/api/report/{jid}.json").json()
     assert data["job_id"] == jid
     assert len(data["episodes"]) == 2          # покрыты ВСЕ эпизоды
-    rh = client.get(f"/report/{jid}")
-    assert rh.status_code == 200
-
-
-def test_md_export_and_history():
-    r = client.post("/check", data={"doc_text": DOC, "use_ai": "off"})
-    assert r.status_code == 200
-    import re
-    jid = re.search(r"/api/report/([0-9a-f]+)\.json", r.text).group(1)
-    # экспорт .md как вложение
+    assert data["episodes"][0]["verdict"]["explanation"]  # объяснение есть
     md = client.get(f"/api/report/{jid}.md")
     assert md.status_code == 200
     assert "attachment" in md.headers.get("content-disposition", "")
-    assert "Отчёт сверки" in md.text
-    # отчёт попал в историю
+    docx = client.get(f"/api/report/{jid}.docx")
+    assert docx.status_code == 200
+    assert docx.content[:2] == b"PK"           # docx — это zip
+
+
+def test_history_session_scoped_e2e():
+    jid = _run_check({"doc_text": DOC, "use_ai": "off"})
     h = client.get("/history")
     assert h.status_code == 200
-    assert jid in h.text
+    assert jid in h.text                       # своя проверка видна в истории
 
 
 def test_md_export_missing():

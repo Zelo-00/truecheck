@@ -5,15 +5,15 @@ import hashlib
 import logging
 import os
 import secrets
-import uuid
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               PlainTextResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import (APP_NAME, APP_TAGLINE, AUTHOR, AUTHOR_YEAR, __version__,
-               config, llm, report as report_mod)
+               config, jobs, llm, report as report_mod)
 from .extract import SUPPORTED_EXTS, analyze_document, read_document
 from .grader import build_report
 from .sources import attach_sources, fetch_text_from_url
@@ -121,53 +121,77 @@ async def check(
         if not secrets.compare_digest(given, config.ACCESS_TOKEN):
             return _error(request, "Неверный или отсутствует токен доступа.", status=401)
 
-    # --- 1. получаем проверяемый текст: файл | вставка | ссылка ---
-    doc_name, text = "", ""
+    # --- 1. читаем загруженные байты СИНХРОННО (UploadFile живёт только в запросе) ---
+    doc_bytes: bytes | None = None
+    doc_filename = ""
     if doc_file is not None and doc_file.filename:
-        raw = await doc_file.read()
-        _guard_size(raw)
-        doc_name = doc_file.filename
-        text = read_document(raw, doc_name)
-    elif doc_url.strip():
-        text, name = fetch_text_from_url(doc_url.strip())
-        doc_name = name or doc_url.strip()
-    elif doc_text.strip():
-        doc_name = "Вставленный текст"
-        text = doc_text
-
-    if not text.strip():
-        return _error(request, "Не удалось получить текст: загрузите файл, вставьте текст или дайте рабочую ссылку.")
-
-    # --- 2. источники, загруженные пользователем ---
+        doc_bytes = await doc_file.read()
+        _guard_size(doc_bytes)
+        doc_filename = doc_file.filename
     uploads: dict[str, bytes] = {}
     for sf in source_files or []:
         if sf and sf.filename:
             b = await sf.read()
             _guard_size(b)
             uploads[sf.filename] = b
+    doc_url = doc_url.strip()
 
-    # --- 3. разбор → привязка источников → грейдинг ---
-    episodes, sources = analyze_document(text)
-    log.info("проверка '%s': %d симв., эпизодов=%d, источников=%d, файлов-источников=%d",
-             doc_name, len(text), len(episodes), len(sources), len(uploads))
-    attach_sources(sources, uploads)
+    if doc_bytes is None and not doc_url and not doc_text.strip():
+        return _error(request, "Не удалось получить текст: загрузите файл, вставьте текст или дайте рабочую ссылку.")
+
     want_ai = use_ai == "on" and llm.available()
-    job_id = uuid.uuid4().hex[:12]
-    rep = build_report(job_id, doc_name, episodes, sources, use_ai=want_ai)
-
-    # --- 4. рендер + сохранение + привязка к сессии ---
     sid = request.cookies.get("tc_sid") or secrets.token_hex(16)
-    report_mod.save(rep)
-    report_mod.append_index(rep, sid)
-    html = templates.get_template("report.html").render(request=request, rep=rep,
-                                                        status_class=_STATUS_CLASS,
-                                                        app_name=APP_NAME)
-    with open(os.path.join(config.REPORTS_DIR, job_id + ".html"), "w", encoding="utf-8") as f:
-        f.write(html)
-    resp = HTMLResponse(html)
+    display = doc_filename or ("Вставленный текст" if doc_text.strip() else doc_url)
+    job = jobs.create(display)
+    report_url = str(request.base_url).rstrip("/") + "/report/" + job.id
+
+    # --- 2. вся тяжёлая работа — в фоне, с прогрессом по эпизодам ---
+    def _process(j: jobs.Job) -> None:
+        if doc_bytes is not None:
+            text = read_document(doc_bytes, doc_filename)
+        elif doc_url:
+            text, name = fetch_text_from_url(doc_url)
+            if name:
+                j.doc_name = name
+        else:
+            text = doc_text
+        if not text.strip():
+            j.error = "Не удалось извлечь текст из документа/ссылки."
+            j.state = "error"
+            return
+        episodes, sources = analyze_document(text)
+        j.total = len(episodes)
+        log.info("проверка '%s': %d симв., эпизодов=%d, источников=%d, файлов=%d",
+                 j.doc_name, len(text), len(episodes), len(sources), len(uploads))
+        attach_sources(sources, uploads)
+
+        def _cb(done: int, total: int) -> None:
+            j.done, j.total = done, total
+
+        rep = build_report(j.id, j.doc_name, episodes, sources,
+                           use_ai=want_ai, progress_cb=_cb)
+        report_mod.save(rep)
+        report_mod.append_index(rep, sid)
+        html = templates.get_template("report.html").render(
+            rep=rep, status_class=_STATUS_CLASS, app_name=APP_NAME, report_url=report_url)
+        with open(os.path.join(config.REPORTS_DIR, j.id + ".html"), "w", encoding="utf-8") as f:
+            f.write(html)
+
+    jobs.start(job, _process)
+
+    resp = templates.TemplateResponse(request, "progress.html",
+                                      {"job_id": job.id, "doc_name": display})
     if not request.cookies.get("tc_sid"):
         resp.set_cookie("tc_sid", sid, max_age=_COOKIE_MAXAGE, httponly=True, samesite="lax")
     return resp
+
+
+@app.get("/status/{job_id}")
+def job_status(job_id: str):
+    j = jobs.get(_safe(job_id))
+    if not j:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return JSONResponse(j.as_dict())
 
 
 @app.get("/report/{job_id}", response_class=HTMLResponse)
@@ -197,6 +221,17 @@ def get_report_md(job_id: str):
     with open(path, encoding="utf-8") as f:
         return PlainTextResponse(f.read(), media_type="text/markdown; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="truecheck-{jid}.md"'})
+
+
+@app.get("/api/report/{job_id}.docx")
+def get_report_docx(job_id: str):
+    jid = _safe(job_id)
+    path = os.path.join(config.REPORTS_DIR, jid + ".docx")
+    if not os.path.exists(path):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(
+        path, filename=f"truecheck-{jid}.docx",
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
 
 # --- helpers ---

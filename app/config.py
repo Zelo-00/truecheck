@@ -64,6 +64,8 @@ GEMINI_BASE_URL = os.getenv(
 # --- догрузка источников из сети ---
 FETCH_SOURCES = _flag("FETCH_SOURCES", "true")
 FETCH_TIMEOUT = int(os.getenv("FETCH_TIMEOUT", "20"))
+FETCH_MAX_MB = int(os.getenv("FETCH_MAX_MB", "25"))     # потолок размера сетевого ответа
+ZIP_MAX_UNCOMPRESSED_MB = int(os.getenv("ZIP_MAX_UNCOMPRESSED_MB", "80"))  # анти zip-бомба
 
 # путь к изолированному правилу ИИ
 AI_RULES_PATH = os.getenv("AI_RULES_PATH", "AI_RULES.md")
