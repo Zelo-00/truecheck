@@ -40,7 +40,7 @@
  var content=document.getElementById("content"),hero=document.querySelector(".hero"),chaphead=document.getElementById("chaphead");
  var cms=[].slice.call(document.querySelectorAll(".cm"));
  var total=cms.length, cache={}, current=-1;
- var DONE="ai_course_done_v1";
+ var DONE="ai_course_done_v1",LASTC="ai_course_lastc_v1",LASTY="ai_course_lasty_v1";
  function getDone(){try{return JSON.parse(localStorage.getItem(DONE)||"[]");}catch(_){return[];}}
  function setDoneArr(a){try{localStorage.setItem(DONE,JSON.stringify(a));}catch(_){}}
  function markDone(i){var d=getDone();if(d.indexOf(i)<0){d.push(i);setDoneArr(d);renderProgress();}}
@@ -50,8 +50,12 @@
 
  function renderProgress(){
    var d=getDone(),pct=total?Math.round(d.length/total*100):0,el=document.getElementById("tocprog");
-   if(el)el.innerHTML='<div class="ring" style="--p:'+pct+'"><span>'+pct+'%</span></div>'+
-     '<div class="ring-tx"><b>Пройдено '+d.length+' из '+total+'</b><em>'+(total-d.length)+' осталось</em></div>';
+   if(el){el.innerHTML='<div class="ring" style="--p:'+pct+'"><span>'+pct+'%</span></div>'+
+     '<div class="ring-tx"><b>Пройдено '+d.length+' из '+total+'</b><em>'+(total-d.length)+' осталось</em>'+
+     (d.length?'<button class="reset-btn js-reset" type="button">Сбросить прогресс</button>':'')+'</div>';
+     var rb=el.querySelector(".js-reset");
+     if(rb)rb.addEventListener("click",function(){if(confirm("Сбросить весь прогресс по курсу?")){
+       setDoneArr([]);try{localStorage.removeItem(LASTC);localStorage.removeItem(LASTY);}catch(_){}renderProgress();}});}
    cms.forEach(function(c){c.classList.toggle("done",d.indexOf(+c.dataset.idx)>=0);});
  }
 
@@ -121,13 +125,15 @@
        var rb=content.querySelector(".js-retry");if(rb)rb.addEventListener("click",function(){delete cache[i];go(i);});});
  }
 
- function go(i,hid){
+ function go(i,hid,ry){
    if(i<0||i>=total)return;
    fetchChapter(i,function(htmlStr){
      current=i; content.innerHTML=htmlStr;
      if(hero)hero.style.display=(i===0?"":"none");
      setChapHead(i); setActive(i); enhance();
+     try{localStorage.setItem(LASTC,i);}catch(_){}
      if(hid){var t=document.getElementById(hid);if(t){t.scrollIntoView();window.scrollBy(0,-70);}else window.scrollTo(0,0);}
+     else if(ry>0){setTimeout(function(){window.scrollTo(0,ry);},60);}
      else window.scrollTo({top:0,behavior:reduce?"auto":"smooth"});
      try{history.replaceState(null,"","#"+(hid||("chap"+i)));}catch(_){}
      setOpen(false);
@@ -140,9 +146,16 @@
  // переход по hash из других мест (ссылки внутри текста ведут на #sN)
  addEventListener("hashchange",function(){var hid=location.hash.slice(1);if(hid2idx[hid]!==undefined&&hid2idx[hid]!==current)go(hid2idx[hid],hid);});
 
- // старт
+ // сохранение позиции для «продолжить с места»
+ function saveY(){try{localStorage.setItem(LASTY,""+(window.scrollY||window.pageYOffset||0));}catch(_){}}
+ addEventListener("pagehide",saveY); addEventListener("beforeunload",saveY);
+ document.addEventListener("visibilitychange",function(){if(document.hidden)saveY();});
+
+ // старт — продолжить с последней главы (если нет якоря в адресе)
  renderProgress();
- var si=0,sh=null;
- if(location.hash){var hh=location.hash.slice(1);if(hid2idx[hh]!==undefined){si=hid2idx[hh];sh=hh;}}
- go(si,sh);
+ var si=0,sh=null,ry=0;
+ if(location.hash&&hid2idx[location.hash.slice(1)]!==undefined){sh=location.hash.slice(1);si=hid2idx[sh];}
+ else{var lc=parseInt(localStorage.getItem(LASTC),10);
+   if(!isNaN(lc)&&lc>0&&lc<total){si=lc;ry=parseInt(localStorage.getItem(LASTY),10)||0;}}
+ go(si,sh,ry);
 })();
